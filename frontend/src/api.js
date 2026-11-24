@@ -33,8 +33,20 @@ export const api = {
   中断: (id, 原因 = '急停') =>
     req(`/会话/${id}/中断`, { method: 'POST', body: JSON.stringify({ 原因 }) }),
   充日: () => req('/充日'),
-  封印: (备注 = '') => req('/充日/封印', { method: 'POST', body: JSON.stringify({ 备注 }) }),
-  解封: () => req('/充日/解封', { method: 'POST', body: '{}' }),
+  封印: (备注 = '', 预期世代 = null) =>
+    req('/充日/封印', {
+      method: 'POST',
+      body: JSON.stringify(预期世代 == null ? { 备注 } : { 备注, 预期世代 }),
+    }),
+  解封: (预期世代 = null) =>
+    req('/充日/解封', {
+      method: 'POST',
+      body: JSON.stringify(预期世代 == null ? {} : { 预期世代 }),
+    }),
+  充日历史: () => req('/充日/历史'),
+  充日账本: () => req('/充日/账本'),
+  开充回执: () => req('/充日/开充回执'),
+  开充闸: () => req('/充日/闸'),
   设置: () => req('/设置'),
   写设置: (body) => req('/设置', { method: 'POST', body: JSON.stringify(body) }),
   改桩态: (id, 状态) =>

@@ -24,6 +24,27 @@ def set_setting(conn, key: str, value: str) -> None:
     )
 
 
+def next_seq(conn) -> int:
+    """账本全序：封印事件与开充回执共用一条递增序列，供争用结局重放。"""
+    n = int(get_setting(conn, "账本序号", "0")) + 1
+    set_setting(conn, "账本序号", str(n))
+    return n
+
+
+def ledger_head(conn) -> int:
+    return int(get_setting(conn, "账本序号", "0"))
+
+
+def seal_row(conn, day: str | None = None):
+    d = day or today()
+    return conn.execute("SELECT * FROM day_seals WHERE business_day=?", (d,)).fetchone()
+
+
+def current_generation(conn, day: str | None = None) -> int:
+    r = seal_row(conn, day)
+    return int(r["generation"]) if r else 0
+
+
 def current_band_price(conn, rate_plan_id: int) -> float:
     plan = conn.execute("SELECT * FROM rate_plans WHERE id=?", (rate_plan_id,)).fetchone()
     if not plan:
@@ -37,8 +58,7 @@ def current_band_price(conn, rate_plan_id: int) -> float:
 
 
 def is_day_sealed(conn, day: str | None = None) -> bool:
-    d = day or today()
-    r = conn.execute("SELECT sealed FROM day_seals WHERE business_day=?", (d,)).fetchone()
+    r = seal_row(conn, day)
     return bool(r and r["sealed"])
 
 
@@ -54,20 +74,39 @@ def overview(conn) -> dict:
         "SELECT COALESCE(SUM(amount),0) AS a FROM sessions WHERE business_day=? AND status='已关账'",
         (today(),),
     ).fetchone()["a"]
+    d = today()
+    seal = seal_row(conn, d)
+    gen = int(seal["generation"]) if seal else 0
+    # 充电中桶与锁账徽标取自同一快照、同一封印世代，避免长期拧花。
+    charging = sess_map.get("充电中", 0)
+    seals = conn.execute(
+        """SELECT generation, action, sealed_at FROM seal_events
+           WHERE business_day=? ORDER BY seq DESC, id DESC LIMIT 1""",
+        (d,),
+    ).fetchone()
     return {
         "桩位空闲": pile_map.get("空闲", 0),
         "桩位占用": pile_map.get("占用", 0),
         "桩位故障": pile_map.get("故障", 0),
         "桩位维护": pile_map.get("维护", 0),
-        "充电中": sess_map.get("充电中", 0),
+        "充电中": charging,
         "结算中": sess_map.get("结算中", 0),
         "已关账": sess_map.get("已关账", 0),
         "已超时": sess_map.get("已超时", 0),
         "已中断": sess_map.get("已中断", 0),
         "在充电量": round(float(open_kwh), 3),
         "本日关账金额": round(float(today_amount), 2),
-        "营业日": today(),
-        "充日已封印": is_day_sealed(conn),
+        "营业日": d,
+        "充日已封印": bool(seal and seal["sealed"]),
+        "封印世代": gen,
+        "锁账徽标": "已封印" if (seal and seal["sealed"]) else "未封印",
+        "锁账事件序号": ledger_head(conn),
+        "锁账时间": seal["sealed_at"] if seal else None,
+        "锁账事件": {
+            "世代": int(seals["generation"]) if seals else 0,
+            "动作": seals["action"] if seals else None,
+            "时间": seals["sealed_at"] if seals else None,
+        },
     }
 
 

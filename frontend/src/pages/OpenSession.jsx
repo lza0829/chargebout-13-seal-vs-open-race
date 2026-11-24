@@ -7,12 +7,15 @@ export default function OpenSession() {
   const [pileId, setPileId] = useState('')
   const [gunId, setGunId] = useState('')
   const [msg, setMsg] = useState('')
+  const [gate, setGate] = useState(null)
+  const loadGate = () => api.开充闸().then(setGate)
   useEffect(() => {
     api.桩位().then((list) => {
       setPiles(list)
       const idle = list.find((p) => p.status === '空闲')
       if (idle) setPileId(String(idle.id))
     })
+    loadGate()
   }, [])
   useEffect(() => {
     if (!pileId) return
@@ -28,17 +31,28 @@ export default function OpenSession() {
       const body = { 桩位编号: Number(pileId) }
       if (gunId) body.枪线编号 = Number(gunId)
       const r = await api.开会话(body)
-      setMsg(`已开 ${r.会话号}，锁定电价 ${r.锁定电价}`)
+      setMsg(
+        `已开 ${r.会话号}，锁定电价 ${r.锁定电价}，回执 ${r.开充回执}（世代 ${r.封印世代}）`,
+      )
       const list = await api.桩位()
       setPiles(list)
+      loadGate()
     } catch (e) {
       setMsg(e.message)
+      loadGate()
     }
   }
   return (
     <div className="page">
       <h2>开会话</h2>
       <p className="lead">选空闲桩与可用枪，开出一笔充电会话并占住桩位。</p>
+      {gate && (
+        <p className="lead">
+          开充闸：<span className={`tag ${gate.已封印 ? '已中断' : '可用'}`}>{gate.锁账徽标}</span> · 世代{' '}
+          {gate.封印世代}
+          {gate.已封印 && ' · 开充已闸，提交将整笔让路'}
+        </p>
+      )}
       <div className="panel">
         <div className="row">
           <label>桩位</label>
@@ -58,7 +72,7 @@ export default function OpenSession() {
               </option>
             ))}
           </select>
-          <button type="button" className="primary" onClick={submit}>
+          <button type="button" className="primary" onClick={submit} disabled={gate?.已封印}>
             发起开充
           </button>
         </div>

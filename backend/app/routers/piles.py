@@ -27,7 +27,7 @@ def list_piles(站点编号: int | None = None):
 
 @router.post("/桩位")
 def create_pile(body: PileIn):
-    with db() as conn:
+    with db(immediate=True) as conn:
         cur = conn.execute(
             "INSERT INTO piles(site_id,name,rated_kw,status,rate_plan_id) VALUES(?,?,?,?,?)",
             (body.站点编号, body.名称, body.额定功率, "空闲", body.费率编号),
@@ -42,5 +42,5 @@ def create_pile(body: PileIn):
 
 @router.post("/桩位/{pile_id}/状态")
 def change_status(pile_id: int, body: PileStatusIn):
-    with db() as conn:
+    with db(immediate=True) as conn:
         return set_pile_status(conn, pile_id, body.状态)

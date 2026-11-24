@@ -1,21 +1,40 @@
 from __future__ import annotations
 from fastapi import HTTPException
 
-from app.services.core import current_band_price, get_setting, is_day_sealed, now_str, today
+from app.services.core import (
+    current_band_price,
+    get_setting,
+    next_seq,
+    now_str,
+    seal_row,
+    set_setting,
+    today,
+)
 
 
-def _next_slip(conn) -> str:
+class SealRejected(Exception):
+    """开充在临界区内发现充日已封印：整笔让路，交回滚。"""
+
+
+def _commit_next_slip(conn) -> str:
     n = int(get_setting(conn, "会话序号", "1000")) + 1
-    conn.execute(
-        "INSERT INTO settings(key,value) VALUES('会话序号',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-        (str(n),),
-    )
+    set_setting(conn, "会话序号", str(n))
     return f"充{n}"
 
 
 def open_session(conn, pile_id: int, gun_id: int | None = None) -> dict:
-    if is_day_sealed(conn):
-        raise HTTPException(400, detail="充日已封印，禁止新开充")
+    """开充提交口。
+
+    与封印共用 BEGIN IMMEDIATE 临界区。此处一旦读到「已封印」直接抛
+    SealRejected，调用方回滚整笔事务：会话行、桩/枪占用、会话序号、开充回执、
+    账本序号都不会留下半截；因此不存在「开充回执成功却无占用」或
+    「世代已生效仍多出充电中」。
+    """
+    d = today()
+    seal = seal_row(conn, d)
+    if seal and seal["sealed"]:
+        raise SealRejected(f"充日已封印（世代{int(seal['generation'])}），在途开充整笔让路")
+
     pile = conn.execute("SELECT * FROM piles WHERE id=?", (pile_id,)).fetchone()
     if not pile:
         raise HTTPException(404, detail="桩位不存在")
@@ -39,25 +58,33 @@ def open_session(conn, pile_id: int, gun_id: int | None = None) -> dict:
     if gun["status"] != "可用":
         raise HTTPException(400, detail=f"枪线当前为{gun['status']}")
 
+    # 再核一次封印：本事务已持写锁，此处只作为防回归断言，
+    # 确保未来演进不会在两次读之间引入等待点而让已锁日的开充漏过去。
+    seal = seal_row(conn, d)
+    if seal and seal["sealed"]:
+        raise SealRejected(f"充日已封印（世代{int(seal['generation'])}），在途开充整笔让路")
+    gen = int(seal["generation"]) if seal else 0
+
     price = current_band_price(conn, pile["rate_plan_id"])
-    slip = _next_slip(conn)
+    slip = _commit_next_slip(conn)
     ts = now_str()
     cur = conn.execute(
-        """INSERT INTO sessions(slip_no,site_id,pile_id,gun_id,rate_plan_id,business_day,status,kwh,amount,price_locked,started_at,note)
-           VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+        """INSERT INTO sessions(slip_no,site_id,pile_id,gun_id,rate_plan_id,business_day,status,kwh,amount,price_locked,started_at,note,seal_generation)
+           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (
             slip,
             pile["site_id"],
             pile_id,
             gun["id"],
             pile["rate_plan_id"],
-            today(),
+            d,
             "充电中",
             0,
             0,
             price,
             ts,
             "",
+            gen,
         ),
     )
     sid = cur.lastrowid
@@ -65,9 +92,25 @@ def open_session(conn, pile_id: int, gun_id: int | None = None) -> dict:
     conn.execute("UPDATE guns SET status='占用' WHERE id=?", (gun["id"],))
     conn.execute(
         "INSERT INTO session_events(session_id,action,created_at,note) VALUES(?,?,?,?)",
-        (sid, "开会话", ts, f"锁定电价{price}"),
+        (sid, "开会话", ts, f"锁定电价{price}；封印世代{gen}"),
     )
-    return {"会话号": slip, "会话编号": sid, "锁定电价": price, "状态": "充电中"}
+    seq = next_seq(conn)
+    receipt_no = f"开{seq}"
+    conn.execute(
+        """INSERT INTO open_receipts(seq,receipt_no,session_id,slip_no,business_day,generation,created_at)
+           VALUES(?,?,?,?,?,?,?)""",
+        (seq, receipt_no, sid, slip, d, gen, ts),
+    )
+    return {
+        "会话号": slip,
+        "会话编号": sid,
+        "锁定电价": price,
+        "状态": "充电中",
+        "开充回执": receipt_no,
+        "回执序号": seq,
+        "封印世代": gen,
+        "闸状态": "开充已落账",
+    }
 
 
 def add_pulse(conn, session_id: int, delta_kwh: float, power_kw: float = 0) -> dict:
@@ -169,7 +212,6 @@ def set_pile_status(conn, pile_id: int, status: str) -> dict:
         (pile_id,),
     ).fetchone()
     if open_se and status in ("故障", "维护"):
-        # 底座默认：置故障/维护时若仍有在充，拒绝（后续题可改互斥）
         raise HTTPException(400, detail="仍有在充会话，不可直接改故障或维护")
     if status == "空闲" and open_se:
         raise HTTPException(400, detail="仍有在充会话，不可改空闲")

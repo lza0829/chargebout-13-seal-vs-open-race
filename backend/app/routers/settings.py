@@ -20,6 +20,6 @@ def list_settings():
 
 @router.post("/设置")
 def upsert(body: SettingIn):
-    with db() as conn:
+    with db(immediate=True) as conn:
         set_setting(conn, body.键, body.值)
         return {"键": body.键, "值": body.值}

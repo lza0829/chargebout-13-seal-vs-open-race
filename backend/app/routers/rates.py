@@ -22,7 +22,7 @@ def list_rates():
 
 @router.post("/费率")
 def create_rate(body: RateIn):
-    with db() as conn:
+    with db(immediate=True) as conn:
         cur = conn.execute(
             "INSERT INTO rate_plans(name,peak_price,flat_price,valley_price) VALUES(?,?,?,?)",
             (body.名称, body.峰价, body.平价, body.谷价),

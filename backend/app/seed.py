@@ -5,7 +5,7 @@ from app.services.core import set_setting, today
 
 def seed_if_empty() -> None:
     init_db()
-    with db() as conn:
+    with db(immediate=True) as conn:
         n = conn.execute("SELECT COUNT(*) AS c FROM sites").fetchone()["c"]
         if n:
             return
@@ -58,6 +58,7 @@ def seed_if_empty() -> None:
         # 一桩维护
         conn.execute("UPDATE piles SET status='维护' WHERE name='河甲四号'")
         conn.execute(
-            "INSERT INTO day_seals(business_day,sealed,sealed_at,note) VALUES(?,?,NULL,'')",
-            (today(), 0),
+            "INSERT INTO day_seals(business_day,sealed,sealed_at,note,generation) VALUES(?,0,NULL,'',0)",
+            (today(),),
         )
+        set_setting(conn, "账本序号", "0")

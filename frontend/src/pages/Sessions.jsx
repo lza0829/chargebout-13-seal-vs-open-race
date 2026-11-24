@@ -21,6 +21,7 @@ export default function Sessions() {
               <th>电量</th>
               <th>金额</th>
               <th>营业日</th>
+              <th>封印世代</th>
               <th />
             </tr>
           </thead>
@@ -37,6 +38,7 @@ export default function Sessions() {
                 <td>{s.kwh}</td>
                 <td>{s.amount}</td>
                 <td>{s.business_day}</td>
+                <td>{s.seal_generation}</td>
                 <td>
                   <button type="button" onClick={() => api.会话详情(s.id).then(setDetail)}>
                     详情

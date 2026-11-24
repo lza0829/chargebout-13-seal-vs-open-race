@@ -25,12 +25,14 @@ export default function Home() {
     ['已中断', o.已中断],
     ['在充电量', o.在充电量],
     ['本日关账金额', o.本日关账金额],
+    ['封印世代', o.封印世代],
   ]
   return (
     <div className="page">
       <h2>总览</h2>
       <p className="lead">
-        营业日 {o.营业日} · 充日{o.充日已封印 ? '已封印' : '未封印'}
+        营业日 {o.营业日} · 锁账 <span className={`tag ${o.充日已封印 ? '已中断' : '可用'}`}>{o.锁账徽标}</span>
+        {' '}· 封印世代 {o.封印世代} · 账本序号 {o.锁账事件序号}
       </p>
       <div className="grid">
         {items.map(([k, v]) => (

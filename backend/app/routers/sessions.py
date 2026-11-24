@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 from app.db import db
 from app.services import core
 from app.services import sessions as svc
+from app.services import dayseal as seal_svc
 
 router = APIRouter()
 
@@ -39,30 +40,40 @@ def get_session(session_id: int):
 
 @router.post("/开会话")
 def open_session(body: OpenIn):
-    with db() as conn:
-        return svc.open_session(conn, body.桩位编号, body.枪线编号)
+    try:
+        with db(immediate=True) as conn:
+            return svc.open_session(conn, body.桩位编号, body.枪线编号)
+    except svc.SealRejected as e:
+        # 锁账世代优先：在途开充整笔让路。事务已回滚，无会话/占用/序号/回执残留。
+        raise HTTPException(409, detail=str(e)) from e
 
 
 @router.post("/会话/{session_id}/脉冲")
 def add_pulse(session_id: int, body: PulseIn):
-    with db() as conn:
+    with db(immediate=True) as conn:
         return svc.add_pulse(conn, session_id, body.电量, body.功率)
 
 
 @router.post("/会话/{session_id}/结算")
 def settle(session_id: int):
-    with db() as conn:
+    with db(immediate=True) as conn:
         return svc.settle(conn, session_id)
 
 
 @router.post("/会话/{session_id}/超时")
 def timeout(session_id: int):
-    with db() as conn:
+    with db(immediate=True) as conn:
         return svc.mark_timeout(conn, session_id)
 
 
 @router.post("/会话/{session_id}/中断")
 def abort(session_id: int, body: AbortIn | None = None):
-    with db() as conn:
+    with db(immediate=True) as conn:
         reason = body.原因 if body else "急停"
         return svc.abort_session(conn, session_id, reason)
+
+
+@router.get("/开会话/闸")
+def open_gate():
+    with db() as conn:
+        return seal_svc.seal_state(conn)
